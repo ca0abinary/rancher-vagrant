@@ -1,0 +1,59 @@
+#cloud-config
+
+---
+coreos:
+  etcd:
+    addr: $public_ipv4:4001
+    peer-addr: $public_ipv4:7001
+    discovery: https://discovery.etcd.io/f2da2fe975c230a2890aec4ed4f7c9de
+  fleet:
+    public-ip: $public_ipv4
+    etcd_request_timeout: 3.0
+    metadata: role=worker
+  units:
+  - name: etcd.service
+    command: start
+  - name: fleet.service
+    command: start
+    runtime: false
+    content: |
+      [Unit]
+      Description=fleet
+      [Service]
+      Environment=FLEET_PUBLIC_IP=$public_ipv4
+      ExecStart=/usr/bin/fleet
+  - name: docker-tcp.socket
+    command: start
+    enable: true
+    content: |
+      [Unit]
+      Description=Docker Socket for the API
+
+      [Socket]
+      ListenStream=2375
+      Service=docker.service
+      BindIPv6Only=both
+
+      [Install]
+      WantedBy=sockets.target
+  - name: rancher-agent.service
+    command: start
+    runtime: false
+    content: |
+      [Unit]
+      Description=Rancher Agent
+      After=docker.service etcd.service
+      Requires=docker.service etcd.service
+
+      [Service]
+      Restart=always
+      TimeoutStartSec=30m
+      ExecStartPre=-/usr/bin/docker pull rancher/agent:v0.5.2
+      ExecStartPre=-/usr/bin/docker rm -f rancher-agent-launch
+      ExecStartPre=/bin/bash -c "[ -z $(etcdctl get /services/rancher/mgmt) ] && etcdctl watch /services/rancher/mgmt"
+      ExecStartPre=/bin/bash -c "if [ '$(docker ps -a | grep rancher-agent)' == '' ]; \
+                                      then docker start rancher-agent; \
+                                      else docker run --rm --privileged --name rancher-agent-launch -v /var/run/docker.sock:/var/run/docker.sock rancher/agent http://$(etcdctl get /services/rancher/mgmt)/v1/; \
+                                      fi"
+      ExecStart=/usr/bin/docker attach --no-stdin rancher-agent
+      ExecStop=/usr/bin/docker stop rancher-agent rancher-agent-state
