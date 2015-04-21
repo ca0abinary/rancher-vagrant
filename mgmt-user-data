@@ -1,0 +1,68 @@
+#cloud-config
+
+---
+coreos:
+  etcd:
+    addr: $public_ipv4:4001
+    peer-addr: $public_ipv4:7001
+    discovery: https://discovery.etcd.io/f2da2fe975c230a2890aec4ed4f7c9de
+  fleet:
+    public-ip: $public_ipv4
+    etcd_request_timeout: 3.0
+    metadata: role=mgmt
+  units:
+  - name: etcd.service
+    command: start
+  - name: fleet.service
+    command: start
+    runtime: false
+    content: |
+      [Unit]
+      Description=fleet
+      [Service]
+      Environment=FLEET_PUBLIC_IP=$public_ipv4
+      ExecStart=/usr/bin/fleet
+  - name: docker-tcp.socket
+    command: start
+    enable: true
+    content: |
+      [Unit]
+      Description=Docker Socket for the API
+
+      [Socket]
+      ListenStream=2375
+      Service=docker.service
+      BindIPv6Only=both
+
+      [Install]
+      WantedBy=sockets.target
+  - name: rancher-mgmt.service
+    command: start
+    runtime: false
+    content: |
+      [Unit]
+      Description=Rancher Management Node
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Restart=always
+      TimeoutStartSec=30m
+      ExecStartPre=/usr/bin/docker pull rancher/server
+      ExecStartPre=-/usr/bin/etcdctl set /services/rancher/mgmt '$public_ipv4:8080'
+      ExecStart=/bin/bash -c "if [ '$(docker ps -a | grep rancher-mgmt)' == '' ]; \
+                              then docker start -a rancher-mgmt; \
+                              else docker run -p 8080:8080 --name rancher-mgmt rancher/server; \
+                              fi"
+      ExecStop=/usr/bin/docker stop rancher-mgmt
+      ExecStopPost=-/usr/bin/etcdctl rm /services/rancher/mgmt
+  - name: docker-registry.service
+    command: start
+    content: |
+      [Unit]
+      Description=Docker Registry server
+
+      [Service]
+      TimeoutStartSec=10min
+      ExecStartPre=/bin/sh -c "docker history registry:latest >/dev/null || docker pull registry:latest"
+      ExecStart=/usr/bin/docker run --name docker-registry -e STORAGE_PATH=/registry -e SEARCH_BACKEND=sqlalchemy -p 5000:5000 registry:latest
