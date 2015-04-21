@@ -1,4 +1,4 @@
-# Rancher Vagrant
+# Rancher Vagrant Cluster
 
 This repo provides a template Vagrantfile to create a CoreOS virtual machine using the VirtualBox software hypervisor with [Rancher][rancher] installed.
 After setup is complete you will have a three-node Rancher cluster running on your local machine.
